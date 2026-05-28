@@ -30,8 +30,7 @@ def test_tables(env):
     tables = {
         "events.calls_20160101": """
             CREATE TABLE IF NOT EXISTS
-                events.calls_20160101 ()
-                INHERITS (events.calls)
+                events.calls_20160101 PARTITION OF events.calls FOR VALUES FROM ('2016-01-01') TO ('2016-01-02')
             """,
         "routing.foo": """
             CREATE TABLE IF NOT EXISTS
@@ -116,17 +115,6 @@ def test_cannot_create_events(cursor):
             CREATE TABLE events.calls_20160102 () INHERITS (events.calls)
         """
         )
-
-
-def test_create_public(cursor):
-    """Role can CREATE TABLE in public."""
-    cursor.execute("CREATE TABLE foo(id TEXT)")
-
-
-def test_drop_public(cursor):
-    """Role can DROP TABLE in public."""
-    cursor.execute("CREATE TABLE foo(id TEXT)")
-    cursor.execute("DROP TABLE foo")
 
 
 @pytest.mark.skip_usrs(["flowmachine"])

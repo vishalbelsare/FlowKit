@@ -31,7 +31,8 @@ class Table(Query):
     name : str
         Name of the table, may be fully qualified
     schema : str
-        Optional if name is fully qualified
+        Optional if name is fully qualified, defaults to `flowmachine` if not provided
+        and the name is not qualified.
     columns : str
         Optional list of columns
 
@@ -73,7 +74,7 @@ class Table(Query):
                     raise ValueError("Two schema provided.")
             schema = extracted_schema
         elif schema is None:
-            schema = "public"
+            schema = "flowmachine"
 
         self.name = name
         self.schema = schema
@@ -144,7 +145,7 @@ class Table(Query):
 
     def get_query(self):
         with get_db().engine.begin() as trans:
-            trans.execute(
+            trans.exec_driver_sql(
                 f"UPDATE cache.cached SET last_accessed = NOW(), access_count = access_count + 1 WHERE query_id ='{self.query_id}'"
             )
         return self._make_query()

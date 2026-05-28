@@ -32,9 +32,18 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     zip_safe=False,
-    install_requires=[
-        "apache-airflow[postgres] >= 2.0.0",
-        "click",
-    ],
+    install_requires=["apache-airflow[postgres] >= 2.0.0", "click", "authlib"],
+    extras_require={
+        "dev": [
+            "structlog",
+            "pytest",
+            "psycopg2-binary",
+            "pandas",
+            "docker",
+            "versioneer",
+            "pytest-cov",
+            "black",
+        ]
+    },
     python_requires=">=3.6",
 )

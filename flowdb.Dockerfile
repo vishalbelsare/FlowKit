@@ -12,37 +12,37 @@
 #  on the official Debian Stretch (9) image.
 #
 
-FROM postgres:12.11@sha256:8bff0179347982a6c083e1ed69cf4b65f12b8ae76e61f63b238c8c1ba4714c86
+FROM postgres:16.4-bullseye@sha256:aa6e59636e717dd800a26f524aeb5c031a2b4fe42a84f85104fa2fe89874d1ad
 
 
 ARG POSTGIS_MAJOR=3
 ENV POSTGIS_MAJOR=$POSTGIS_MAJOR
-ARG POSTGIS_VERSION=3.2.1+dfsg-1.pgdg110+1
-ARG PGROUTING_VERSION=3.3.0-2.pgdg110+1
+ARG POSTGIS_VERSION=3.4.2+dfsg-1.pgdg110+1
+ARG PGROUTING_VERSION=3.6.1-1.pgdg110+1
 ARG PG_MEDIAN_UTILS_VERSION=0.0.7
-ARG OGR_FDW_VERSION=1.1.1-1~exp1.pgdg110+1
+ARG OGR_FDW_VERSION=1.1.4-3.pgdg110+1
 ENV POSTGIS_VERSION=$POSTGIS_VERSION
 ENV POSTGRES_DB=flowdb
 ARG POSTGRES_USER=flowdb
 ENV POSTGRES_USER=$POSTGRES_USER
 ENV LC_ALL=en_US.UTF-8
 ENV LC_CTYPE=en_US.UTF-8
-ENV TDS_FDW_VERSION=2.0.2-3.pgdg110+1
+ENV TDS_FDW_VERSION=2.0.3-3.pgdg110+1
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && echo "deb http://apt-archive.postgresql.org/pub/repos/apt bullseye-pgdg-archive main" > /etc/apt/sources.list.d/pgdg-archive.list \
-    && echo "deb-src http://apt-archive.postgresql.org/pub/repos/apt bullseye-pgdg-archive main" >> /etc/apt/sources.list.d/pgdg-archive.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR=$POSTGIS_VERSION  \
-    postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR-scripts=$POSTGIS_VERSION \
-    postgresql-$PG_MAJOR-pgrouting=$PGROUTING_VERSION \
-    postgresql-$PG_MAJOR-ogr-fdw=$OGR_FDW_VERSION \
-    postgresql-$PG_MAJOR-tds-fdw=$TDS_FDW_VERSION \
-    postgresql-server-dev-$PG_MAJOR=$PG_VERSION \
-    postgis=$POSTGIS_VERSION \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get purge -y --auto-remove
+        && echo "deb [ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] http://apt-archive.postgresql.org/pub/repos/apt bullseye-pgdg-archive main" > /etc/apt/sources.list.d/pgdg-archive.list \
+        && echo "deb-src [ signed-by=/usr/local/share/keyrings/postgres.gpg.asc ] http://apt-archive.postgresql.org/pub/repos/apt bullseye-pgdg-archive main" >> /etc/apt/sources.list.d/pgdg-archive.list \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends \
+        postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR=$POSTGIS_VERSION  \
+        postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR-scripts=$POSTGIS_VERSION \
+        postgresql-$PG_MAJOR-pgrouting=$PGROUTING_VERSION \
+        postgresql-$PG_MAJOR-ogr-fdw=$OGR_FDW_VERSION \
+        postgresql-$PG_MAJOR-tds-fdw=$TDS_FDW_VERSION \
+        postgresql-server-dev-$PG_MAJOR=$PG_VERSION \
+        postgis=$POSTGIS_VERSION \
+        && rm -rf /var/lib/apt/lists/* \
+        && apt-get purge -y --auto-remove
 
 #
 #  Setting up locale settings. This will
@@ -82,13 +82,25 @@ RUN apt-get update \
         && mv pldebugger /usr/local/src \
         && make -C /usr/local/src/pldebugger \
         && make -C /usr/local/src/pldebugger install \
-        && apt-get remove -y libssl-dev \
-        libkrb5-dev \
-        build-essential \
-        git \
+        && apt-get remove -y build-essential git \
         && apt purge -y --auto-remove \
         && rm -rf /var/lib/apt/lists/*
 
+# Parquet foreign tables
+RUN apt-get update -y && apt-get install -y --no-install-recommends git build-essential ca-certificates lsb-release wget \
+        && wget https://apache.jfrog.io/artifactory/arrow/$(lsb_release --id --short | tr 'A-Z' 'a-z')/apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+        && apt-get install -y --no-install-recommends ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+        && rm ./apache-arrow-apt-source-latest-$(lsb_release --codename --short).deb \
+        && apt-get update -y \
+        && apt-get install -y --no-install-recommends libarrow-dev libparquet-dev libparquet1600 libarrow1600 \
+        && pip3 install pyarrow \
+        && git clone https://github.com/adjust/parquet_fdw.git \
+        && mv parquet_fdw /usr/local/src \
+        && make -C /usr/local/src/parquet_fdw \
+        && make -C /usr/local/src/parquet_fdw install \
+        && apt-get remove -y build-essential git wget libarrow-dev libparquet-dev \
+        && apt purge -y --auto-remove \
+        && rm -rf /var/lib/apt/lists/*
 
 
 #
@@ -139,6 +151,12 @@ ENV FLOWAPI_FLOWDB_USER=flowapi
 # Default location table
 ENV LOCATION_TABLE=infrastructure.cells
 
+# Default logging destination
+ENV FLOWDB_LOG_DEST=jsonlog
+
+# Default autoconfig file
+ENV AUTO_CONFIG_FILE_NAME=postgresql.configurator.conf
+
 #
 #  Copy file spinup build scripts to be execed.
 #
@@ -152,5 +170,7 @@ COPY --chown=postgres ./flowdb/bin/build/* /docker-entrypoint-initdb.d/
 ADD --chown=postgres ./flowdb/data/* /docker-entrypoint-initdb.d/data/csv/
 # Need to make postgres owner
 RUN chown -R postgres /docker-entrypoint-initdb.d
+# Make postgres owner of the autoconf directory
+RUN mkdir /flowdb_autoconf && chown -R postgres /flowdb_autoconf && chmod a+w /flowdb_autoconf
 
 EXPOSE 5432

@@ -7,12 +7,198 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- FlowAuth: roles assigned to a token at mint time are now recorded in a `tokens_with_roles` association table and exposed on the user's token list (`GET /tokens/tokens/<server_id>`), so users and admins can see which permissions an existing token carries without decoding the JWT. [#7273](https://github.com/Flowminder/FlowKit/issues/7273)
+- FlowAuth: new `POST /tokens/tokens/<token_id>/renew` endpoint mints a fresh JWT reusing the original token's name and roles. The original `TokenHistory` row is left intact so its JWT remains valid until its own `exp` claim passes, giving consumers a natural overlap window. The token list UI gains a "Renew" button on each active token. [#7275](https://github.com/Flowminder/FlowKit/issues/7275)
+- FlowAuth: token mint endpoint accepts an optional `lifetime_minutes` so users can request a token shorter than the maximum permitted by the selected server and roles. [#7274](https://github.com/Flowminder/FlowKit/issues/7274)
 
 ### Changed
+- FlowAuth: `Server.latest_token_expiry` and `Role.latest_token_expiry` are now nullable. A `NULL` value means the row imposes no absolute expiry cap on tokens; only `longest_token_life_minutes` then bounds the lifetime. Existing rows keep their non-null values, so behaviour is unchanged until an operator nulls the column out. This removes the silent-cap footgun that required an admin to bump expiry datetimes ahead of every long-lived-token renewal. [#7274](https://github.com/Flowminder/FlowKit/issues/7274)
+
+### Fixed
+- FlowAuth: `User.token_limits` now correctly filters by the current user when computing role-derived caps. Previously the join did not constrain by user id, so the function returned the most-permissive role on the server across *all* users. [#7274](https://github.com/Flowminder/FlowKit/issues/7274)
+- FlowAuth: the "Renew" button is now also shown on expired tokens. The renewal endpoint already accepted expired tokens (only the server/role caps are checked), but the button was hidden on the Expired tokens list and on rows whose `expiry` had passed.
+- FlowAuth: hide the "Renew" button on tokens minted before the `tokens_with_roles` association was introduced. Those rows have no roles recorded, so the renewal endpoint refuses them with `InvalidUsage`; previously the button was visible and clicking it returned an error. Old tokens must be re-minted from scratch.
+- FlowAuth: enable SQLAlchemy `pool_pre_ping` so dead connections in the pool are detected and replaced before each query instead of surfacing as `MySQLdb.OperationalError (2013, 'Lost connection to MySQL server during query')`. This eliminates the ~5-minute window of 500s after every container restart while the stale pool drains.
+- FlowAuth: the *Latest expiry* date pickers on the Server and Role admin forms now have a Clear button, and submit `null` rather than an Invalid Date / 1970 epoch string when empty. Without this the backend's nullable `latest_token_expiry` was unreachable from the UI — operators could see the "no cap" semantics in the API but had no way to actually clear an existing cap.
+
+### Removed
+
+## [1.34.0]
+
+### Added
+- Added Google auth to flowetl.
+
+## [1.33.1]
+
+### Fixed
+- FlowDB `cache_score` function no longer throws a divide-by-zero error for empty cache tables. [#7027](https://github.com/Flowminder/FlowKit/issues/7027)
+
+## [1.33.0]
+
+### Changed
+- Flowmachine's cache cleanup service is now a separate docker container from the main server. [#5911](https://github.com/Flowminder/FlowKit/issues/5911)
+> [!WARNING]
+> You will need to update your FlowKit deployment to include an additional flowmachine container which sets the command to `"cache-cleanup"`.
+
+### Removed
+- FlowETL has been updated to Airflow 2.10.5, `airflow.providers.postgres.operators.postgres.PostgresOperator` is deprecated in favour of `airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator`.
+
+## [1.32.0]
+
+### Changed 
+- Modified FlowETL `count_duplicates` and `count_duplicated` QA check queries to improve performance, without changing the results. [#6935](https://github.com/Flowminder/FlowKit/issues/6935)
+- Columns `msisdn`, `msisdn_counterpart`, `imsi` and `imei` in the FlowDB events/interactions tables now use `"C"` collation. This change requires reindexing affected columns. [#6941](https://github.com/Flowminder/FlowKit/issues/6941)
+
+## [1.31.0]
+
+### Changed
+- Mode is now available for use with categorical metrics when running joined spatial aggregates via api. [#2021](https://github.com/Flowminder/FlowKit/issues/2021) 
+- Flowmachine now includes the version number in query ids which means cache entries are per-version. [#4489](https://github.com/Flowminder/FlowKit/issues/4489) 
+
+### Fixed
+- Fixed dangling async tasks not being properly cancelled during server shutdown [#6833](https://github.com/Flowminder/FlowKit/issues/6833)
+
+## [1.30.0]
+
+### Changed
+- FlowMachine now requires python >= 3.11
+
+### Fixed
+- Direction enum not being recognised [#6787](https://github.com/Flowminder/FlowKit/issues/6787)
+
+### Removed
+- Removed Oracle fdw
+
+## [1.29.0]
+
+### Added
+- New flowmachine query `CalendarActivity`, which retrives subscribers pattern of active days
+- New flowmachine queries `PerValueAggregate` and `RedactedPerValueAggregate`, which group by the value column of another query and apply an aggregate to subscribers with that grouping.
+- New flowapi queries and flowclient functions for `calendar_activity` and `localised_calendar_activity`, which return counts of subscribers per sequence of active days, and per sequence of active days additionally grouped by the subscribers reference location
+- Added new `StringStatistic` enum, which enumerates valid statistics for use with postgres string types
+
+### Changed
+- `HistogramAggregation` has moved to `flowmachine.features.nonspatial_aggregates`
+- `Statistic` moved to `flowmachine.core.statistic_types`
+- `TotalActivePeriodsSubscriber` no longer returns an extra `inactive_periods` column
+
+## [1.28.1]
+
+### Fixed
+- Fixed 500 error when getting api spec from FlowAPI [#6686](https://github.com/Flowminder/FlowKit/issues/6686)
+
+## [1.28.0]
+
+### Added
+- Added support for Parquet foreign tables using [parquet_fdw](https://github.com/adjust/parquet_fdw)
+
+### Changed
+- FlowKit test and synthetic data now uses parquet foreign tables.
+> [!WARNING]
+> The location of the parquet files in the container is `/parquet_data`, if you are testing with larger amounts of data you may wish to add an additional bind mount for this location.
+- FlowDB now uses [declarative partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html#DDL-PARTITIONING-DECLARATIVE)
+- FlowETL now attached new data as partitions, rather than subtables
+> [!WARNING]
+> This change is not backwards compatible with earlier releases of FlowDB, and you will need to repopulate your deployment. We recommend combining this change with the new parquet support.
+- FlowETL is now built on Airflow 2.9.2
+
+
+
+## [1.27.0]
+
+### Added
+- Added FlowDB table `infrastructure.invalid_cell_info` for recording cell information that could not be included in `infrastructure.cell_info` (including cells with null or duplicate cell IDs). [#6626](https://github.com/Flowminder/FlowKit/issues/6626)
+- The file name of FlowDB's automatically generated at init config file can now be specified by setting the `AUTO_CONFIG_FILE_NAME` environment variable. By default this is `postgresql.configurator.conf`.
+
+### Changed
+- FlowDB now triggers an ANALYZE on newly created cache tables to generate statistics rather than waiting for autovacuum
+- FlowDB now produces JSON formatted logs by default. Set `FLOWDB_LOG_DEST=csvlog` for the old default behaviour.
+- The logging destination of FlowDB can now be configured at init by setting the `FLOWDB_LOG_DEST` environment variable, valid options are `stderr`, `csvlog`, and `jsonlog`.
+- The location inside the container of FlowDB's automatically generated config file has changed to `/flowdb_autoconf/$AUTO_CONFIG_FILE_NAME`.
+
+
+## [1.26.0]
+
+### Changed
+- FlowDB now enables partitionwise aggregation planning by default
+- FlowDB now uses a default fillfactor of 100 for cache table indexes
+- `EXCLUDE` constraint on FlowDB `infrastructure.cell_info` table requires unique `mno_cell_id` across _all_ simultaneously-valid cells per `cells_table_version`, regardless of `to_include`. [#6626](https://github.com/Flowminder/FlowKit/issues/6626)
+
+### Fixed
+- Queries that have multiple of the same subquery with different parameters no longer cause duplicate scopes in tokens. [#6580](https://github.com/Flowminder/FlowKit/issues/6580)
+- FlowETL QA checks `count_imeis`, `count_imsis`, `max_msisdns_per_imei` and `max_msisdns_per_imsi` now only count non-null IMEIs/IMSIs. [#6619](https://github.com/Flowminder/FlowKit/issues/6619)
+
+## [1.25.0]
+
+### Fixed
+- FlowETL `get_qa_checks` no longer attempts to create duplicate tasks for QA checks defined in the DAG folder. [#6494](https://github.com/Flowminder/FlowKit/issues/6494)
+
+### Removed
+- Removed `flowpyter-task` from the FlowETL Docker image. For a Docker image with `flowpyter-task` included, see (flowminder/flowbot)[https://hub.docker.com/r/flowminder/flowbot].
+
+## [1.24.0]
+
+### Added
+- Test and synthetic data generators now perform QA checks on the generated data. [#6467](https://github.com/Flowminder/FlowKit/issues/6467)
+- Added new `/qa` endpoint to FlowAPI and FlowClient, which supports getting the results of QA checks run by FlowETL [#2704](https://github.com/Flowminder/FlowKit/issues/2704)
+- Added new `available_qa_checks` property to flowmachine `Connection` objects [#2704](https://github.com/Flowminder/FlowKit/issues/2704)
+- Added new `get_qa_checks` method to flowmachine `Connection` objects [#2704](https://github.com/Flowminder/FlowKit/issues/2704)
+
+### Fixed
+- Test QA check IDs are now of the same format as those produced by FlowETL. [#6472](https://github.com/Flowminder/FlowKit/issues/6472)
+- FlowAuth now runs migrations correctly on startup. [#6480](https://github.com/Flowminder/FlowKit/issues/6480)
+
+
+## [1.23.0]
+
+### Changed
+- `MostFrequentLocation` now breaks ties based on the last used location, instead of by arbitrary Postgres sort order. [#6268](https://github.com/Flowminder/FlowKit/issues/6268)
+- Users no longer have write access to the public schema in FlowDB following a change introduced in [PostgreSQL 15](https://www.postgresql.org/about/news/postgresql-15-released-2526/)
+- FlowDB is now built on PostgreSQL 16, debian bullseye
+  #### Warning
+
+  You may need to update your docker version to use newer releases of FlowDB. You will also need to create a fresh database and reimport data if you are upgrading from a previous FlowDB release.
+
+
+## [1.22.0]
+
+### Added
+- FlowETL sensor `NRowsPresentSensor` which checks for a specified minimum number of rows.
+
+### Changed
+- `ForeignStagingTableOperator` will now error if the underlying file cannot be read or the command returns an error. [#5763](https://github.com/Flowminder/FlowKit/issues/5763)
+- Flowmachine now requires SQLAlchemy >= 2.0.0 [#6066](https://github.com/Flowminder/FlowKit/issues/6066)
+
+## [1.21.1]
+
+### Added
+
+### Changed
+- Upgraded Python dependencies
 
 ### Fixed
 
 ### Removed
+
+## [1.21.0]
+### Added
+- Added new FlowDB tables `infrastructure.cell_info` and `infrastructure.cells_table_versions` to keep track of changes to the cell info over time (note: the new tables have not yet replaced `infrastructure.cells` as the source of cell information for FlowKit queries). [#6184](https://github.com/Flowminder/FlowKit/issues/6184)
+
+## [1.20.0]
+
+### Changed
+
+- Updated flowpyter-task to 1.1.0
+
+### Removed
+
+- Removed AutoFlow. [#6394](https://github.com/Flowminder/FlowKit/issues/6394)
+
+## [1.19.1]
+
+### Added
+
+- Added flowpyter-task to FlowETL container
 
 ## [1.19.0]
 
@@ -1025,7 +1211,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 -   Added Python 3.6 support for FlowClient
 
-[Unreleased]: https://github.com/Flowminder/FlowKit/compare/1.19.0...master
+[Unreleased]: https://github.com/Flowminder/FlowKit/compare/1.34.0...master
+[1.34.0]: https://github.com/Flowminder/FlowKit/compare/1.33.1...1.34.0
+[1.33.1]: https://github.com/Flowminder/FlowKit/compare/1.33.0...1.33.1
+[1.33.0]: https://github.com/Flowminder/FlowKit/compare/1.32.0...1.33.0
+[1.32.0]: https://github.com/Flowminder/FlowKit/compare/1.31.0...1.32.0
+[1.31.0]: https://github.com/Flowminder/FlowKit/compare/1.30.0...1.31.0
+[1.30.0]: https://github.com/Flowminder/FlowKit/compare/1.29.0...1.30.0
+[1.29.0]: https://github.com/Flowminder/FlowKit/compare/1.28.1...1.29.0
+[1.28.1]: https://github.com/Flowminder/FlowKit/compare/1.28.0...1.28.1
+[1.28.0]: https://github.com/Flowminder/FlowKit/compare/1.27.0...1.28.0
+[1.27.0]: https://github.com/Flowminder/FlowKit/compare/1.26.0...1.27.0
+[1.26.0]: https://github.com/Flowminder/FlowKit/compare/1.25.0...1.26.0
+[1.25.0]: https://github.com/Flowminder/FlowKit/compare/1.24.0...1.25.0
+[1.24.0]: https://github.com/Flowminder/FlowKit/compare/1.23.0...1.24.0
+[1.23.0]: https://github.com/Flowminder/FlowKit/compare/1.22.0...1.23.0
+[1.22.0]: https://github.com/Flowminder/FlowKit/compare/1.21.1...1.22.0
+[1.21.1]: https://github.com/Flowminder/FlowKit/compare/1.21.0...1.21.1
+[1.21.0]: https://github.com/Flowminder/FlowKit/compare/1.20.0...1.21.0
+[1.20.0]: https://github.com/Flowminder/FlowKit/compare/1.19.1...1.20.0
+[1.19.1]: https://github.com/Flowminder/FlowKit/compare/1.19.0...1.19.1
 [1.19.0]: https://github.com/Flowminder/FlowKit/compare/1.18.4...1.19.0
 [1.18.4]: https://github.com/Flowminder/FlowKit/compare/1.18.3...1.18.4
 [1.18.3]: https://github.com/Flowminder/FlowKit/compare/1.18.2...1.18.3

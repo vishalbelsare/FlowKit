@@ -4,11 +4,11 @@
 
 from typing import Dict, Optional
 
-from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from flowetl.mixins.table_name_macros_mixin import TableNameMacrosMixin
 
 
-class CreateForeignStagingTableOperator(TableNameMacrosMixin, PostgresOperator):
+class CreateForeignStagingTableOperator(TableNameMacrosMixin, SQLExecuteQueryOperator):
     def __init__(
         self,
         *,
@@ -49,7 +49,7 @@ class CreateForeignStagingTableOperator(TableNameMacrosMixin, PostgresOperator):
         encoding : str or None, default None
             String giving encoding type. Uses system locale by default.
         kwargs : dict
-            Passed to airflow.operators.postgres_operator.PostgresOperator
+            Passed to airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator
         """
         # Using an f-string here because filename needs to be templated, which is won't be if it is a param
         sql = f"""
@@ -66,6 +66,7 @@ class CreateForeignStagingTableOperator(TableNameMacrosMixin, PostgresOperator):
                    escape '{{{{ params.escape }}}}'
                    {{% if params.encoding is defined %}}, {{{{ params.encoding }}}} {{% endif %}} 
                    );
+            SELECT EXISTS(SELECT * FROM {{{{ staging_table }}}} LIMIT 1); 
                 """
         fields_string = ",\n\t".join(
             f"{field_name} {field_type.upper()}"

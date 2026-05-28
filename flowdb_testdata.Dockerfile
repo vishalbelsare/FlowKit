@@ -11,6 +11,8 @@
 
 ARG CODE_VERSION=latest
 FROM flowminder/flowdb:${CODE_VERSION}
+# Something causes a a hang if we don't do this: https://github.com/docker-library/postgres/discussions/1183#discussioncomment-10205585
+ENV PAGER=cat
 
 
 #
@@ -40,7 +42,8 @@ COPY --chown=postgres flowdb/testdata/bin/* /docker-entrypoint-initdb.d/
 ADD --chown=postgres flowdb/testdata/test_data/sql/* /docker-entrypoint-initdb.d/sql/testdata/
 ADD --chown=postgres flowdb/testdata/test_data/py/* /docker-entrypoint-initdb.d/py/testdata/
 ADD --chown=postgres flowdb/testdata/test_data/data/ /docker-entrypoint-initdb.d/data/
-COPY  --chown=postgres flowdb/testdata/test_data/data/*.csv /docker-entrypoint-initdb.d/data/csv/
+COPY --chown=postgres flowdb/testdata/test_data/data/*.csv /docker-entrypoint-initdb.d/data/csv/
+COPY --chown=postgres flowetl/flowetl/flowetl/qa_checks/qa_checks /docker-entrypoint-initdb.d/qa_checks
 # Need to make postgres owner of any subdirectories
 RUN chown -R postgres /docker-entrypoint-initdb.d
 # Explicitly set number of days of dfs data to match test data

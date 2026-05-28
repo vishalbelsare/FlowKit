@@ -23,6 +23,8 @@ class Token extends React.Component {
   state = {
     isOpen: false,
     copySuccess: "",
+    renewing: false,
+    renewError: "",
   };
   toggleOpen = () => {
     this.setState({ isOpen: !this.state.isOpen });
@@ -44,16 +46,39 @@ class Token extends React.Component {
     document.body.appendChild(element);
     element.click();
   };
+  handleRenew = async () => {
+    const { id, onRenew } = this.props;
+    if (!onRenew) return;
+    this.setState({ renewing: true, renewError: "" });
+    try {
+      await onRenew(id);
+    } catch (err) {
+      this.setState({ renewError: err.message || "Renewal failed" });
+    } finally {
+      this.setState({ renewing: false });
+    }
+  };
   render() {
-    const { name, expiry, token, classes } = this.props;
-    const { isOpen, copySuccess } = this.state;
+    const { name, expiry, token, classes, roles, onRenew } = this.props;
+    const { isOpen, copySuccess, renewing, renewError } = this.state;
     const isExpired = Date.parse(expiry) < Date.parse(new Date());
+    const roleSummary =
+      roles && roles.length > 0 ? roles.map((r) => r.name).join(", ") : null;
     return (
       <React.Fragment>
         <Grid item xs={3}>
           <Typography component="p" className={isExpired ? "expired" : ""}>
             {name}{" "}
           </Typography>
+          {roleSummary && (
+            <Typography
+              variant="caption"
+              color="textSecondary"
+              className={isExpired ? "expired" : ""}
+            >
+              Roles: {roleSummary}
+            </Typography>
+          )}
         </Grid>
         <Grid item xs={3}>
           <Typography component="p" className={isExpired ? "expired" : ""}>
@@ -81,6 +106,22 @@ class Token extends React.Component {
           <Button variant="outlined" color="primary" onClick={this.toggleOpen}>
             View
           </Button>
+          {onRenew && roles && roles.length > 0 && (
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={this.handleRenew}
+              disabled={renewing}
+              className={classes.button}
+            >
+              {renewing ? "Renewing…" : "Renew"}
+            </Button>
+          )}
+          {renewError && (
+            <Typography variant="caption" color="error">
+              {renewError}
+            </Typography>
+          )}
           <Dialog
             open={isOpen}
             onClose={this.toggleOpen}

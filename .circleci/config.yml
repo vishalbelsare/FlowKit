@@ -20,13 +20,12 @@ commands:
 
 defaults:
   - &base_docker
-    - image: cimg/python:3.8
+    - image: cimg/python:3.12
       environment:
         FLOWDB_PORT: 5432
         MPLBACKEND: "agg"
   - &flowdb_env
     FLOWDB_PORT: 9000
-    ORACLE_DB_PORT: 9002
     SYNTHETIC_DATA_DB_PORT: 5432
     FLOWDB_DATA_DIR: /home/circleci/database_data
     FLOWDB_INGESTION_DIR: /home/circleci/project/flowdb/tests/data
@@ -35,6 +34,7 @@ defaults:
     FLOWAPI_FLOWDB_USER: flowapi
     FLOWMACHINE_FLOWDB_PASSWORD: foo
     FLOWAPI_FLOWDB_PASSWORD: foo
+    TEST_QA_CHECK: 1
   - &wait_for_flowdb
     name: Wait for flowdb to start
     command: |
@@ -72,7 +72,7 @@ executors:
     parameters:
       python_version:
         type: enum
-        enum: ["3.7", "3.8", "3.8.3", "3.8.5", "3.9"]
+        enum: ["3.7", "3.8", "3.9", "3.11", "3.12"]
         default: "3.8"
       flowdb_image:
         type: enum
@@ -158,14 +158,15 @@ executors:
           SHARED_BUFFERS_SIZE: "1GB"
           EFFECTIVE_CACHE_SIZE: "1GB"
           STATS_TARGET: 100
-      - image: bitnami/redis:latest
+          FLOWDB_LOG_DEST: stderr
+      - image: bitnamilegacy/redis:latest
         environment:
           REDIS_PASSWORD: "fm_redis"
 
 jobs:
   build_flowdb:
     machine:
-      image: ubuntu-2004:202107-02
+      image: ubuntu-2004:2023.10.1
     working_directory: /home/circleci/project
     environment: *flowdb_env
     steps:
@@ -179,10 +180,10 @@ jobs:
       - restore_cache:
           key: flowdb-deps-6-{{ checksum "flowdb/tests/Pipfile.lock"}}
       - run:
-          name: "Switch to Python v3.9.4"
+          name: "Switch to Python v3.11.5"
           command: |
             pyenv versions
-            pyenv global 3.9.4
+            pyenv global 3.11.5
       - run:
           name: Install pipenv
           command: pip install --upgrade pip pipenv virtualenv
@@ -245,7 +246,7 @@ jobs:
           command: |
             cd flowdb/tests
             pipenv run pytest --junit-xml=../test_results/pytest/results.xml \
-            --ignore=test_synthetic_data.py --ignore=test_oracle_fdw.py
+            --ignore=test_synthetic_data.py
       - store_test_results:
           path: flowdb/test_results
       - run:
@@ -262,63 +263,6 @@ jobs:
           paths:
             - .env
 
-  build_flowdb_oracle:
-    machine: # Need to talk to the container, so must use machine per: https://circleci.com/docs/2.0/building-docker-images/#accessing-services
-      image: ubuntu-2004:202107-02
-    environment: *flowdb_env
-    working_directory: /home/circleci/project
-    steps:
-      - checkout:
-          path: /home/circleci/project/
-      - run:
-          name: "Switch to Python v3.9.4"
-          command: |
-            pyenv versions
-            pyenv global 3.9.4
-      - run:
-          name: Install pipenv
-          command: pip install --upgrade pip pipenv
-      - restore_cache:
-          key: flowdb-deps-6-{{ checksum "flowdb/tests/Pipfile.lock"}}
-      - attach_workspace:
-          at: /home/circleci/
-      - run:
-          name: Build oracle_fdw image
-          command: |
-            echo Building oracle_fdw version $FLOWDB_VERSION
-            echo Tagging as flowdb-oracle:$CIRCLE_SHA1
-            DOCKER_BUILDKIT=1 docker build --build-arg ORACLE_BINARY_SOURCE=https://raw.githubusercontent.com/bumpx/oracle-instantclient/master \
-              --build-arg CODE_VERSION=$CIRCLE_SHA1 -t flowminder/flowdb-oracle:$CIRCLE_SHA1 -f flowdb_oracle_fdw.Dockerfile .
-      - run:
-          name: Launch flowdb
-          command: |
-            docker run --name flowdb_oracle --shm-size=1G --publish $ORACLE_DB_PORT:5432 -e FLOWMACHINE_FLOWDB_PASSWORD=foo -e FLOWAPI_FLOWDB_PASSWORD=foo \
-            -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-             --detach flowminder/flowdb-oracle:$CIRCLE_SHA1
-            echo "Waiting for flowdb with oracle_fdw to be ready.."
-            docker exec flowdb_oracle bash -c 'i=0;until [ $i -ge 24 ] || (pg_isready -h 127.0.0.1 -p 5432);do let i=i+1; echo Waiting 10s; sleep 10;done'
-            docker ps -a
-            docker images -a
-      - run:
-          name: Run tests
-          command: |
-            cd flowdb/tests
-            pipenv install --dev --deploy
-            pipenv run pytest --junit-xml=../test_results/pytest/results.xml \
-            test_oracle_fdw.py
-      - store_test_results:
-          path: flowdb/test_results
-      - run:
-          name: FlowDB-oracle Docker logs
-          command: docker logs flowdb_oracle
-          when: on_fail
-      - run:
-          name: Log in to docker cloud
-          command: echo $DOCKER_CLOUD_PASSWORD | docker login --username $DOCKER_CLOUD_USER --password-stdin
-      - run:
-          name: Push images to Docker cloud
-          command: |
-            docker push flowminder/flowdb-oracle:${CIRCLE_SHA1}
 
   build_flowdb_testdata:
     docker:
@@ -327,8 +271,7 @@ jobs:
     steps:
       - checkout:
           path: /home/circleci/project/
-      - setup_remote_docker:
-          version: 20.10.7
+      - setup_remote_docker
       - attach_workspace:
           at: /home/circleci/
       - run:
@@ -352,8 +295,7 @@ jobs:
     steps:
       - checkout:
           path: /home/circleci/project/
-      - setup_remote_docker:
-          version: 20.10.7
+      - setup_remote_docker
       - attach_workspace:
           at: /home/circleci/
       - run:
@@ -386,13 +328,22 @@ jobs:
     steps:
       - checkout
       - restore_cache:
-          key: flowmachine-deps-8-{{ checksum "flowmachine/Pipfile.lock" }}
+          key: flowmachine-deps-12-{{ checksum "flowmachine/Pipfile.lock" }}
+      # Pin pipenv to match flowmachine.Dockerfile. Different pipenv versions
+      # hash the same Pipfile to different `_meta.hash` values; without this
+      # pin, the cimg image's bundled pipenv and the Dockerfile's
+      # `pip install pipenv` end up disagreeing, and no single Pipfile.lock
+      # can satisfy both jobs. 2024.4.1 is the version that hashes the
+      # current Pipfile to the value stored in Pipfile.lock.
+      - run:
+          name: Install pipenv
+          command: pip install --upgrade pip "pipenv==2024.4.1"
       # Need to install graphviz and pygraphviz manually because it was removed from the Pipfile
       # (see https://github.com/Flowminder/FlowKit/issues/952)
       - run: cd flowmachine && pipenv install --dev --deploy
       - run: cd flowmachine && sudo apt-get update && sudo apt-get install -y libgraphviz-dev graphviz && pipenv run pip install pygraphviz
       - save_cache:
-          key: flowmachine-deps-8-{{ checksum "flowmachine/Pipfile.lock" }}
+          key: flowmachine-deps-12-{{ checksum "flowmachine/Pipfile.lock" }}
           paths:
             - /home/circleci/.local/share/virtualenvs/
 
@@ -402,7 +353,7 @@ jobs:
     steps:
       - checkout
       - restore_cache:
-          key: flowmachine-deps-8-{{ checksum "flowmachine/Pipfile.lock" }}
+          key: flowmachine-deps-12-{{ checksum "flowmachine/Pipfile.lock" }}
       - run:
           name: Linting files with black
           # Installed the version of Black from flowmachine's lockfile
@@ -436,6 +387,7 @@ jobs:
       name: python_with_flowdb
       flowdb_image: "testdata"
       num_days: 7
+      python_version: "3.12"
     working_directory: /home/circleci/project/flowmachine
     steps:
       - checkout:
@@ -443,7 +395,7 @@ jobs:
       - attach_workspace:
           at: /home/circleci/
       - restore_cache:
-          key: flowmachine-deps-8-{{ checksum "Pipfile.lock" }}
+          key: flowmachine-deps-12-{{ checksum "Pipfile.lock" }}
       - run:
           name: Install graphviz
           command: sudo apt-get update && sudo apt-get install -y xvfb libgraphviz-dev graphviz
@@ -472,7 +424,7 @@ jobs:
       name: python_with_flowdb
       flowdb_image: "synthetic-data"
       synthetic_data_generator: <<parameters.synthetic_data_generator>>
-      python_version: "3.9"
+      python_version: "3.11"
     working_directory: /home/circleci/project/flowdb/tests
     steps:
       - checkout:
@@ -609,6 +561,7 @@ jobs:
       - run:
           name: Run Cypress end-to-end tests
           command: DEBUG="cypress:*" npx cypress run --record --reporter junit --reporter-options "mochaFile=results/flowauth-frontend.[hash].xml"
+          max_auto_reruns: 5
       - run:
           name: Run Cypress component tests
           command: DEBUG="cypress:*" npx cypress run --component --record --reporter junit --reporter-options "mochaFile=results/flowauth-component.[hash].xml"
@@ -637,60 +590,16 @@ jobs:
       - upload_codecov:
           test: test_results
 
-  run_autoflow_tests:
-    docker:
-      - image: cimg/python:3.8.5
-    working_directory: /home/circleci/project/autoflow
-    steps:
-      - checkout:
-          path: /home/circleci/project/
-      - restore_cache:
-          keys:
-            - autoflow-deps-6-{{ checksum "Pipfile.lock" }}
-      - run: &install_autoflow_deps
-          name: Install non-python autoflow dependencies
-          command: |
-            sudo apt-get update --allow-releaseinfo-change && sudo apt-get install -y postgresql pandoc ruby
-            sudo gem i rubygems-update -v '<3' 
-            sudo update_rubygems
-            sudo gem install bundler -v 2.3.26
-            sudo gem install bundle 
-            bundle install
-      - run:
-          name: Install python dependencies
-          command: |
-            pipenv install --deploy --dev
-      - save_cache:
-          key: autoflow-deps-6-{{ checksum "Pipfile.lock" }}
-          paths:
-            - /home/circleci/.local/share/virtualenvs/
-      - run:
-          name: Run autoflow unit tests
-          command: |
-            pipenv run python -m pytest --junitxml=test_results/pytest/results.xml --cov=./ \
-             --cov-report term --cov-report xml --durations=10
-      - store_test_results:
-          path: test_results
-      - upload_codecov:
-          test: test_results
-
   build_docker_image:
     parameters:
       component:
         type: enum
         enum:
-          [
-            "flowmachine",
-            "flowauth",
-            "flowapi",
-            "flowkit-examples",
-            "flowetl",
-            "autoflow",
-          ]
+          ["flowmachine", "flowauth", "flowapi", "flowkit-examples", "flowetl"]
       component_path:
         type: string
     machine:
-      image: ubuntu-2004:2023.07.1
+      image: ubuntu-2004:2023.10.1
     working_directory: /home/circleci/project/
     steps:
       - checkout:
@@ -722,22 +631,12 @@ jobs:
       - restore_cache:
           key: flowetl-unit-deps-6-{{ checksum "requirements.txt" }}-{{ checksum "dev-requirements.txt" }}
       - run:
-          name: Install required python version
-          command: |
-            pyenv install -s $(pyenv local)
-            python --version
-      - run:
-          name: Create virtual env
-          command: |
-            python -m venv ./.venv
-            source .venv/bin/activate
-            pip install --upgrade pip pip-tools
-      - run:
           name: Install python dependencies
+          # Touching requirements files here so that make doesn't rebuild them - we can't rely on file timestamps in a fresh repo clone
           command: |
-            source .venv/bin/activate
-            pip-sync requirements.txt dev-requirements.txt --pip-args "--no-deps"
-            pip install --no-deps -e ./flowetl
+            pyenv update
+            touch requirements.txt dev-requirements.txt
+            make CI=true dev-sync
       - save_cache:
           key: flowetl-unit-deps-6-{{ checksum "requirements.txt" }}-{{ checksum "dev-requirements.txt" }}
           paths:
@@ -756,7 +655,7 @@ jobs:
 
   run_flowetl_integration_tests:
     machine:
-      image: ubuntu-2004:202107-02
+      image: ubuntu-2404:2024.05.1
     environment:
       AIRFLOW_HOME: ./test_airflow_home
       FLOWETL_RUNTIME_CONFIG: "testing"
@@ -772,22 +671,11 @@ jobs:
             sudo apt-get update
             sudo apt install libpq-dev
       - run:
-          name: Install required python version
-          command: |
-            pyenv install -s $(pyenv local)
-            python --version
-      - run:
-          name: Create virtual env
-          command: |
-            python -m venv ./.venv
-            source .venv/bin/activate
-            pip install --upgrade pip pip-tools
-      - run:
           name: Install python dependencies
+          # Touching requirements files here so that make doesn't rebuild them - we can't rely on file timestamps in a fresh repo clone
           command: |
-            source .venv/bin/activate
-            pip-sync requirements.txt dev-requirements.txt --pip-args "--no-deps"
-            pip install --no-deps -e ./flowetl
+            touch requirements.txt dev-requirements.txt
+            make CI=true dev-sync
       - run:
           name: Install postgresql
           command: |
@@ -817,7 +705,7 @@ jobs:
     executor:
       name: python_with_flowdb
       flowdb_image: "testdata"
-      python_version: "3.8.5"
+      python_version: "3.11"
     working_directory: /home/circleci/project/integration_tests
     steps:
       - checkout:
@@ -825,15 +713,10 @@ jobs:
       - attach_workspace:
           at: /home/circleci
       - restore_cache:
-          key: integration-test-deps-6-{{ checksum "Pipfile.lock" }}
-      - when:
-          condition:
-            equal: ["not query_tests", << parameters.pytest_selector >>]
-          steps:
-            - run: *install_autoflow_deps
+          key: integration-test-deps-9-{{ checksum "Pipfile.lock" }}
       - run: pipenv install --deploy --dev
       - save_cache:
-          key: integration-test-deps-6-{{ checksum "Pipfile.lock" }}
+          key: integration-test-deps-9-{{ checksum "Pipfile.lock" }}
           paths:
             - /home/circleci/.local/share/virtualenvs/
       - run: *wait_for_flowdb
@@ -841,7 +724,7 @@ jobs:
           name: Run integration tests
           command: |
             PIPENV_DONT_LOAD_ENV=1 FLOWAPI_PORT=9090 pipenv run pytest -sv --junitxml=test_results/pytest/results.xml --durations=10 \
-            --cov=../flowmachine --cov=../flowclient --cov=../flowapi --cov=../autoflow \
+            --cov=../flowmachine --cov=../flowclient --cov=../flowapi \
             --cov-report xml \
             --cov-report term \
             -k "<<parameters.pytest_selector>>"
@@ -857,7 +740,7 @@ jobs:
         enum: ["", "examples smaller_data"]
         default: ""
     machine:
-      image: ubuntu-2004:2023.04.2
+      image: ubuntu-2004:2023.10.1
     working_directory: /home/circleci/project
     steps:
       - checkout:
@@ -897,6 +780,7 @@ jobs:
       num_mds: 20000
       disaster_start_date: 2016-02-11
       disaster_end_date: 2016-03-01
+      python_version: "3.11"
     working_directory: /home/circleci/project/docs
     steps:
       - checkout:
@@ -904,7 +788,7 @@ jobs:
       - attach_workspace:
           at: /home/circleci/
       - restore_cache:
-          key: flowkit-docs-deps-6-{{ checksum "Pipfile.lock" }}
+          key: flowkit-docs-deps-10-{{ checksum "Pipfile.lock" }}
       - run:
           name: Install pandoc
           command: |
@@ -998,7 +882,7 @@ jobs:
           path: /home/circleci/project/docs/pg_log.zip
           destination: pg_log
       - save_cache:
-          key: flowkit-docs-deps-6-{{ checksum "Pipfile.lock" }}
+          key: flowkit-docs-deps-10-{{ checksum "Pipfile.lock" }}
           paths:
             - /home/circleci/.local/share/virtualenvs/
 
@@ -1052,7 +936,7 @@ jobs:
           command: |
             export DOCKER_USER=$DOCKER_CLOUD_USER
             export DOCKER_PASS=$DOCKER_CLOUD_PASSWORD
-            for IMAGE in flowapi flowmachine flowdb flowdb-oracle flowdb-synthetic-data flowdb-testdata flowauth flowkit-examples flowetl autoflow; do
+            for IMAGE in flowapi flowmachine flowdb flowdb-synthetic-data flowdb-testdata flowauth flowkit-examples flowetl; do
               docker-retag flowminder/$IMAGE:$CIRCLE_SHA1 ${<< parameters.tag >>:-latest}
             done
 
@@ -1064,10 +948,6 @@ workflows:
       - build_flowdb:
           <<: *run_always_org_context
       - build_flowdb_testdata:
-          requires:
-            - build_flowdb
-          <<: *run_always_org_context
-      - build_flowdb_oracle:
           requires:
             - build_flowdb
           <<: *run_always_org_context
@@ -1106,8 +986,6 @@ workflows:
           requires:
             - build_flowdb_synthdata
           <<: *run_always_org_context
-      - run_autoflow_tests:
-          <<: *run_always_org_context
       - build_docker_image:
           name: build_examples
           component: flowkit-examples
@@ -1138,11 +1016,6 @@ workflows:
           name: build_flowapi
           component: flowapi
           component_path: flowapi
-          <<: *run_always_org_context
-      - build_docker_image:
-          name: build_autoflow
-          component: autoflow
-          component_path: autoflow
           <<: *run_always_org_context
       - run_flowauth_end_to_end_tests:
           requires:
@@ -1236,9 +1109,6 @@ workflows:
             - build_flowetl_wheel
             - build_flowkit_jwt_generator_wheel
             - run_flowmachine_tests
-            - run_autoflow_tests
-            - build_autoflow
-            - build_flowdb_oracle
           <<: *master_only_org_context
       - retag_images:
           name: retag_tagged_build

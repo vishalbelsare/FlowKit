@@ -4,12 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-sqlalchemy = "<2.0.0" # https://github.com/Flowminder/FlowKit/issues/6066
+sqlalchemy = "*"
 cachetools = "*"
 numpy = "*"
 networkx = "*"
 pandas = "*"
-pglast = "==4.1" # Pin pglast because different versions may produce different query IDs
+pglast = "==6.3" # Pin pglast because different versions may produce different query IDs
 python-dateutil = "*"
 pytz = "*"
 python-louvain = "*"
@@ -33,12 +33,11 @@ pre_commit = "*"
 geojson = "*"
 geopandas = "*"
 descartes = "*"
-black = {extras = ["jupyter"],version = "==23.9.1"}
+black = {extras = ["jupyter"],version = "==24.10.0"}
 pytest = "*"
 pytest-asyncio = "*"
 pytest-cov = "*"
 pytest-testmon = "*"
-asynctest = "*"
 cachey = "*"
 approvaltests = "*"
 watchdog = "*"
@@ -46,4 +45,4 @@ ipdb = "*"
 flowmachine = {editable = true, extras = ["test"], path = "."}
 
 [requires]
-python_version = "3.8"
+python_version = "3.12"

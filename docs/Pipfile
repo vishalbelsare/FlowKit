@@ -5,7 +5,7 @@ name = "pypi"
 
 [packages]
 mkdocs = "*"
-black = {extras = ["jupyter"],version = "==23.7.0"}
+black = {extras = ["jupyter"],version = "==24.3.0"}
 jupyter-client = "*"
 nbconvert = "*"
 pygments = "*"
@@ -14,6 +14,7 @@ tabulate = "*"
 pandas = "*"
 mkdocs-material = "*"
 ipykernel = "*"
+ipython = "<9.0.0"
 geopandas = "*"
 numpydoc = "*"
 click = "*"
@@ -34,7 +35,7 @@ mike = "*"
 jupyterlab = "*"
 
 [requires]
-python_version = "3.8"
+python_version = "3.11"
 
 [scripts]
 build = "bash build.sh"

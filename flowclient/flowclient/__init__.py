@@ -28,6 +28,11 @@ from .client import (
     query_is_ready,
     run_query,
     get_available_dates,
+    get_qa_check_outcome,
+    get_qa_check_outcomes,
+    get_qa_check_outcomes_df,
+    get_available_qa_checks,
+    get_available_qa_checks_df,
 )
 from .query_specs import (
     daily_location_spec,
@@ -75,6 +80,8 @@ from .aggregates import (
     trips_od_matrix,
     labelled_spatial_aggregate,
     labelled_flows,
+    calendar_activity,
+    localised_calendar_activity,
 )
 
 __all__ = [
@@ -89,6 +96,11 @@ __all__ = [
     "query_is_ready",
     "run_query",
     "get_available_dates",
+    "get_qa_check_outcomes",
+    "get_qa_check_outcomes_df",
+    "get_available_qa_checks",
+    "get_available_qa_checks_df",
+    "get_qa_check_outcome",
     "APIQuery",
     "ASyncAPIQuery",
     "location_event_counts",
@@ -113,6 +125,8 @@ __all__ = [
     "trips_od_matrix",
     "labelled_spatial_aggregate",
     "labelled_flows",
+    "calendar_activity",
+    "localised_calendar_activity",
 ]
 
 from . import _version

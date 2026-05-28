@@ -5,6 +5,8 @@
 """
 Tests for cache management utilities.
 """
+import re
+
 from cachey import Scorer
 from unittest.mock import Mock, MagicMock
 
@@ -33,11 +35,11 @@ from flowmachine.core.cache import (
     write_query_to_cache,
     get_cache_protected_period,
     set_cache_protected_period,
-    watch_and_shrink_cache,
 )
 from flowmachine.core.context import get_db, get_redis, get_executor
 from flowmachine.core.query_state import QueryState, QueryStateMachine
 from flowmachine.features import daily_location
+from flowmachine import __version__
 
 
 class TestException(Exception):
@@ -110,9 +112,11 @@ def test_touch_cache_record_for_table(flowmachine_connect):
     Touching a cache record for a table should update access count and last accessed but not touch score, or counter.
     """
     table = Table("events.calls_20160101")
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET compute_time = 1 WHERE query_id=%s", table.query_id
-    )  # Compute time for tables is zero, so set to 1 to avoid zeroing out
+    with get_db().engine.begin() as conn:
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET compute_time = 1 WHERE query_id=%(ident)s",
+            dict(ident=table.query_id),
+        )  # Compute time for tables is zero, so set to 1 to avoid zeroing out
     assert 0 == get_score(get_db(), table.query_id)
     assert (
         1
@@ -195,12 +199,13 @@ def test_shrink_one(flowmachine_connect):
     """
     dl = daily_location("2016-01-01").store().result()
     dl_aggregate = dl.aggregate().store().result()
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 1 WHERE query_id='{dl_aggregate.query_id}'"
-    )
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
-    )
+    with get_db().engine.begin() as conn:
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 1 WHERE query_id='{dl_aggregate.query_id}'"
+        )
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
+        )
     removed_query, table_size = next(shrink_one(get_db(), protected_period=-1))
     assert dl.query_id == removed_query.query_id
     assert not dl.is_stored
@@ -271,12 +276,13 @@ def test_shrink_to_size_uses_score(flowmachine_connect):
     """
     dl = daily_location("2016-01-01").store().result()
     dl_aggregate = dl.aggregate().store().result()
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 1000 WHERE query_id='{dl_aggregate.query_id}'"
-    )
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
-    )
+    with get_db().engine.begin() as conn:
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 1000 WHERE query_id='{dl_aggregate.query_id}'"
+        )
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
+        )
     table_size = get_size_of_table(get_db(), dl.table_name, "cache")
     removed_queries = shrink_below_size(get_db(), table_size, protected_period=-1)
     assert 1 == len(removed_queries)
@@ -290,12 +296,13 @@ def test_shrink_one(flowmachine_connect):
     """
     dl = daily_location("2016-01-01").store().result()
     dl_aggregate = dl.aggregate().store().result()
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 1000 WHERE query_id='{dl_aggregate.query_id}'"
-    )
-    get_db().engine.execute(
-        f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
-    )
+    with get_db().engine.begin() as conn:
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 1000 WHERE query_id='{dl_aggregate.query_id}'"
+        )
+        conn.exec_driver_sql(
+            f"UPDATE cache.cached SET cache_score_multiplier = 0.5 WHERE query_id='{dl.query_id}'"
+        )
     removed_query, table_size = next(shrink_one(get_db(), protected_period=-1))
     assert dl.query_id == removed_query.query_id
     assert not dl.is_stored
@@ -333,7 +340,9 @@ def test_cache_miss_value_error_rescore():
     """
     connection_mock = Mock()
     trans_mock = MagicMock()
-    trans_mock.__enter__.return_value.execute.return_value.fetchall.return_value = []
+    trans_mock.__enter__.return_value.exec_driver_sql.return_value.fetchall.return_value = (
+        []
+    )
     connection_mock.engine.begin.return_value = trans_mock
     with pytest.raises(ValueError):
         touch_cache(connection_mock, "NOT_IN_CACHE")
@@ -377,6 +386,23 @@ def test_get_query_object_by_id(flowmachine_connect):
     retrieved_query = get_query_object_by_id(get_db(), dl.query_id)
     assert dl.query_id == retrieved_query.query_id
     assert dl.get_query() == retrieved_query.get_query()
+
+
+def test_get_query_object_by_id_other_version(flowmachine_connect, monkeypatch):
+    """
+    Test that we raise a value error with differing version.
+    """
+    with monkeypatch.context() as ctxt:
+        ctxt.setattr("flowmachine.__version__", "OLD_VERSION")
+        ctxt.setattr("flowmachine.core.cache.__version__", "OLD_VERSION")
+        dl = daily_location("2016-01-01").store().result()
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            f"Query id '5525f9a94aeef6c5387287f2e1dfb2a7' belongs to a different flowmachine version (query version OLD_VERSION, our version {__version__})."
+        ),
+    ):
+        get_query_object_by_id(get_db(), dl.query_id)
 
 
 def test_delete_query_by_id(flowmachine_connect):
@@ -581,44 +607,3 @@ def test_cache_ddl_op_error(dummy_redis):
             ddl_ops_func=Mock(side_effect=TestException),
         )
     assert qsm.current_query_state == QueryState.ERRORED
-
-
-@pytest.mark.asyncio
-async def test_cache_watch_does_shrink(flowmachine_connect):
-    """
-    Test that the cache watcher will shrink cache tables.
-    """
-    dl = daily_location("2016-01-01").store().result()
-    assert dl.is_stored
-    assert get_size_of_cache(get_db()) > 0
-    await watch_and_shrink_cache(
-        flowdb_connection=get_db(),
-        pool=get_executor(),
-        sleep_time=0,
-        loop=False,
-        protected_period=-1,
-        size_threshold=1,
-    )
-    assert not dl.is_stored
-    assert get_size_of_cache(get_db()) == 0
-
-
-@pytest.mark.asyncio
-async def test_cache_watch_does_timeout(flowmachine_connect, json_log):
-    """
-    Test that the cache watcher will timeout and log that it has.
-    """
-    await watch_and_shrink_cache(
-        flowdb_connection=get_db(),
-        pool=get_executor(),
-        sleep_time=0,
-        loop=False,
-        protected_period=-1,
-        size_threshold=1,
-        timeout=0,
-    )
-    log_lines = [x for x in json_log().err if x["level"] == "error"]
-    assert (
-        log_lines[0]["event"]
-        == "Failed to complete cache shrink within 0s. Trying again in 0s."
-    )

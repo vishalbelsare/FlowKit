@@ -46,21 +46,6 @@ def test_file_pipeline(
     ).fetchall()
     assert date_present[0][0] > 0
 
-    # Check table is inherited
-
-    exists_query = f"""SELECT EXISTS(SELECT relname 
-        FROM 
-            pg_inherits i 
-        JOIN 
-            pg_class c 
-        ON 
-            c.oid = inhrelid 
-        WHERE 
-            inhparent = 'events.calls'::regclass
-        AND
-            relname = 'calls_20160301')"""
-    assert flowdb_transaction.execute(exists_query).fetchall()[0][0]
-
     # Check table is clustered on the right field
 
     clustered_query = f"""SELECT EXISTS(
@@ -80,27 +65,6 @@ def test_file_pipeline(
         i.relname = 'calls_20160301_msisdn_idx')
     """
     assert flowdb_transaction.execute(clustered_query).fetchall()[0][0]
-
-    # Check table has date constraints
-
-    constraint_query = f"""SELECT 
-        pg_get_constraintdef(c.oid)
-    FROM   
-        pg_constraint c
-    JOIN   
-        pg_namespace n 
-    ON 
-        n.oid = c.connamespace
-    WHERE  
-        contype ='c' 
-    AND 
-        conrelid::regclass = 'events.calls_20160301'::regclass
-    """
-    constraint_string = f"CHECK (((datetime >= '2016-03-01 00:00:00+00'::timestamp with time zone) AND (datetime < '2016-03-02 00:00:00+00'::timestamp with time zone)))"
-    assert (
-        flowdb_transaction.execute(constraint_query).fetchall()[0][0].replace("\n", "")
-        == constraint_string
-    )
 
     # Check ETL meta
 
@@ -127,8 +91,38 @@ def test_file_pipeline(
 
     # Check qa checks
 
-    qa_check_query = "SELECT count(*) from etl.post_etl_queries WHERE cdr_date='2016-03-01' AND cdr_type='calls'"
-    assert flowdb_transaction.execute(qa_check_query).fetchall()[0][0] == 24
+    qa_check_query = "SELECT type_of_query_or_check from etl.post_etl_queries WHERE cdr_date='2016-03-01' AND cdr_type='calls'"
+    assert sorted(
+        row[0] for row in flowdb_transaction.execute(qa_check_query).fetchall()
+    ) == sorted(
+        [
+            "count_added_rows",
+            "count_duplicated",
+            "count_duplicates",
+            "count_location_ids",
+            "count_msisdns",
+            "dummy_qa_check",
+            "earliest_timestamp",
+            "latest_timestamp",
+            "count_imeis",
+            "count_imsis",
+            "count_locatable_events",
+            "count_locatable_location_ids",
+            "count_null_imeis",
+            "count_null_imsis",
+            "count_null_location_ids",
+            "max_msisdns_per_imei",
+            "max_msisdns_per_imsi",
+            "count_added_rows_outgoing.calls",
+            "count_null_counterparts.calls",
+            "count_null_durations.calls",
+            "count_onnet_msisdns_incoming.calls",
+            "count_onnet_msisdns_outgoing.calls",
+            "count_onnet_msisdns.calls",
+            "max_duration.calls",
+            "median_duration.calls",
+        ]
+    )
 
 
 def test_file_pipeline_bad_file(

@@ -113,8 +113,9 @@ class Query(metaclass=ABCMeta):
                     pass
 
                 hashes.append(str(item))
-            hashes.append(self.__class__.__name__)
             hashes.sort()
+            hashes.append(self.__class__.__name__)
+            hashes.append(flowmachine.__version__)
             self._md5 = md5(str(hashes).encode()).hexdigest()
             return self._md5
 
@@ -165,7 +166,7 @@ class Query(metaclass=ABCMeta):
         con = get_db().engine
         qur = self.get_query()
         with con.begin() as trans:
-            self._query_object = trans.execute(qur)
+            self._query_object = trans.exec_driver_sql(qur)
 
         return self
 
@@ -531,7 +532,7 @@ class Query(metaclass=ABCMeta):
         queries.append(f"ALTER TABLE {full_name} OWNER TO flowmachine;")
         for ix in self.index_cols:
             queries.append(
-                "CREATE INDEX ON {tbl} ({ixen})".format(
+                "CREATE INDEX ON {tbl} ({ixen}) WITH (fillfactor = 100)".format(
                     tbl=full_name, ixen=",".join(ix) if isinstance(ix, list) else ix
                 )
             )
@@ -818,12 +819,12 @@ class Query(metaclass=ABCMeta):
                     )
                 ]
                 with con.begin() as trans:
-                    trans.execute(
+                    trans.exec_driver_sql(
                         "DELETE FROM cache.cached WHERE query_id=%s", (self.query_id,)
                     )
                     log("Deleted cache record.")
                     if drop:
-                        trans.execute(
+                        trans.exec_driver_sql(
                             "DROP TABLE IF EXISTS {}".format(
                                 self.fully_qualified_table_name
                             )
@@ -849,7 +850,7 @@ class Query(metaclass=ABCMeta):
                 full_name = name
             log("Dropping table outside cache schema.", table_name=full_name)
             with con.begin() as trans:
-                trans.execute("DROP TABLE IF EXISTS {}".format(full_name))
+                trans.exec_driver_sql("DROP TABLE IF EXISTS {}".format(full_name))
             q_state_machine.finish_resetting()
         elif q_state_machine.is_resetting:
             log("Query is being reset from elsewhere, waiting for reset to finish.")

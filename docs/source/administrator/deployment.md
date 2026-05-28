@@ -29,18 +29,21 @@ FlowDB is distributed as a docker container. To run it, you will need to provide
 
 You may also provide the following environment variables:
 
-| Variable name                     | Purpose | Default value |
-|-----------------------------------| ------- | ------------- |
-| CACHE_SIZE                        | Maximum size of the cache schema | 1 tenth of available space in pgdata directory |
-| CACHE_PROTECTED_PERIOD            | Amount of time to protect cache tables from being cleaned up | 86400 (24 hours) |
-| CACHE_HALF_LIFE                   | Speed at which cache tables expire when not used | 1000 |
-| MAX_CPUS                          | Maximum number of CPUs that may be used for parallelising queries | The greater of 1 or 1 less than all CPUs |
-| SHARED_BUFFERS_SIZE               | Size of shared buffers | 16GB |
-| MAX_WORKERS                       |  Maximum number of CPUs that may be used for parallelising one query | MAX_CPUS/2 |
-| MAX_WORKERS_PER_GATHER            |  Maximum number of CPUs that may be used for parallelising part of one query | MAX_CPUS/2 |
-| EFFECTIVE_CACHE_SIZE              | Postgres cache size | 25% of total RAM |
-| FLOWDB_ENABLE_POSTGRES_DEBUG_MODE | When set to TRUE, enables use of the [pgadmin debugger](https://www.pgadmin.org/docs/pgadmin4/4.13/debugger.html) | FALSE |
- | MAX_LOCKS_PER_TRANSACTION         | Controls the maximum number of locks one transaction can take, you may wish to reduce this on low-memory servers. | 36500 | 
+| Variable name                     | Purpose                                                                                                           | Default value                                  |
+|-----------------------------------|-------------------------------------------------------------------------------------------------------------------|------------------------------------------------|
+| CACHE_SIZE                        | Maximum size of the cache schema                                                                                  | 1 tenth of available space in pgdata directory |
+| CACHE_PROTECTED_PERIOD            | Amount of time to protect cache tables from being cleaned up                                                      | 86400 (24 hours)                               |
+| CACHE_HALF_LIFE                   | Speed at which cache tables expire when not used                                                                  | 1000                                           |
+| MAX_CPUS                          | Maximum number of CPUs that may be used for parallelising queries                                                 | The greater of 1 or 1 less than all CPUs       |
+| SHARED_BUFFERS_SIZE               | Size of shared buffers                                                                                            | 16GB                                           |
+| MAX_WORKERS                       | Maximum number of CPUs that may be used for parallelising one query                                               | MAX_CPUS/2                                     |
+| MAX_WORKERS_PER_GATHER            | Maximum number of CPUs that may be used for parallelising part of one query                                       | MAX_CPUS/2                                     |
+| EFFECTIVE_CACHE_SIZE              | Postgres cache size                                                                                               | 25% of total RAM                               |
+| FLOWDB_ENABLE_POSTGRES_DEBUG_MODE | When set to TRUE, enables use of the [pgadmin debugger](https://www.pgadmin.org/docs/pgadmin4/4.13/debugger.html) | FALSE                                          |
+| MAX_LOCKS_PER_TRANSACTION         | Controls the maximum number of locks one transaction can take, you may wish to reduce this on low-memory servers. | 36500                                          | 
+| FLOWDB_LOG_DEST                   | Controls the logging destination, may be be one of `stderr`, `jsonlog`, `csvlog`.                                  | `jsonlog`                                       |
+| AUTO_CONFIG_FILE_NAME | The path in the container of the automatically generated config file located at /flowdb_autoconf | `postgresql.configurator.conf` |
+
 
 However in most cases, the defaults will be adequate.
 
@@ -115,7 +118,7 @@ We recommend running FlowETL using the celery scheduler, in which case you will 
     Generating Fernet keys
     
     A convenient way to generate Fernet keys is to use the python [cryptography](https://cryptography.io/) package. After installing, you can generate a new key by running `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"`.
-
+=
 
 See also the [airflow documentation](https://airflow.apache.org/docs/stable/) for other configuration options which you can provide as environment variables.
 
@@ -313,28 +316,6 @@ conn = flowclient.Connection(url="https://localhost:9090", token="JWT_STRING", s
 ```
 
 (This generates a certificate valid for the `flow.api` domain as well, which you can use by adding a corresponding entry to your `/etc/hosts` file.)
-
-
-#### AutoFlow production deployment
-
-Analysts with permission to run docker containers may choose to run their own AutoFlow instances. Instructions for doing so can be found in the [AutoFlow documentation](../analyst/autoflow.md#running-autoflow). A sample stack file for deploying AutoFlow along with the rest of the FlowKit stack can be found [here](https://github.com/Flowminder/FlowKit/blob/master/autoflow/docker-stack.yml), which adds an AutoFlow service, and an additionl Postgres database used by AutoFlow to record workflow runs. This makes use of the `cert-flowkit.pem` secret provided to FlowAPI, and also requires two other secrets:
-
-| Secret name | Secret purpose |
-| ----------- | -------------- |
-| AUTOFLOW_DB_PASSWORD | Password for AutoFlow's database |
-| FLOWAPI_TOKEN | API token AutoFlow will use to connect to FlowAPI |
-
-You should also set the following environment variables:
-
-| Variable name | Purpose |
-| ------------- | ------- |
-| AUTOFLOW_INPUTS_DIR | Path on the host to the directory where input files to AutoFlow are stored |
-| AUTOFLOW_OUTPUTS_DIR | Path on the host to a directory where AutoFLow should store output files |
-
-and optionally set the `AUTOFLOW_LOG_LEVEL` environment variable (default 'ERROR').
-
-!!!note
-    AutoFlow input files (Jupyter notebooks and `workflows.yml`) should be in the inputs directory before starting the AutoFlow container. Files added later will not be picked up by AutoFlow.
 
 #### Demonstrating successful deployment
 

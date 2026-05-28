@@ -6,8 +6,8 @@ import binhex
 import base64
 
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.backends.openssl.rsa import _RSAPrivateKey
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from dogpile.cache import make_region, CacheRegion
 from multiprocessing import Event
 
@@ -59,7 +59,7 @@ def get_cache_backend() -> CacheRegion:
 
 # Duplicated in flowkit_jwt_generator (cannot re-use the implementation
 # there because the module is outside the docker build context for flowauth).
-def load_private_key(key_string: str) -> _RSAPrivateKey:
+def load_private_key(key_string: str) -> rsa.RSAPrivateKey:
     """
     Load a private key from a string, which may be base64 encoded.
 
@@ -102,7 +102,7 @@ def get_config():
             ADMIN_USER=environ["FLOWAUTH_ADMIN_USERNAME"],
             ADMIN_PASSWORD=environ["FLOWAUTH_ADMIN_PASSWORD"],
             SQLALCHEMY_DATABASE_URI=db_uri,
-            SQLALCHEMY_ENGINE_OPTIONS=dict(pool_recycle=3600),
+            SQLALCHEMY_ENGINE_OPTIONS=dict(pool_recycle=3600, pool_pre_ping=True),
             SECRET_KEY=environ["SECRET_KEY"],
             SESSION_PROTECTION="strong",
             SQLALCHEMY_TRACK_MODIFICATIONS=False,

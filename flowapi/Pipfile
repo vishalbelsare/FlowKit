@@ -12,9 +12,9 @@ quart-jwt-extended = {extras = ["asymmetric-crypto"],version = "*"}
 cryptography = "*" # This _should_ get installed given the flask-jwt-extended extra, but is getting put in the develop section of the lockfile
 structlog = "*"
 python-rapidjson = "*"
-pyyaml = "==5.3.1" # Pending https://github.com/Flowminder/FlowKit/issues/6015
-jsonschema = "==4.17.3" # Pending https://github.com/Flowminder/FlowKit/issues/6015
-apispec = {extras = ["yaml"],version = "*"}
+pyyaml = "==5.3.1" # Pinned to v5.3.1 pending https://github.com/Flowminder/FlowKit/issues/6015
+jsonschema = "==4.17.3" # Pinned to v4.17.3 pending https://github.com/Flowminder/FlowKit/issues/6015
+apispec = {extras = ["yaml"],version = "<6.7.1"} # Constrained to < 6.7.1 due to https://github.com/Flowminder/FlowKit/issues/6015#issuecomment-2627056217
 get-secret-or-env-var = "*"
 prance = {extras = ["osv"],version = "*"}
 openapi-schema-validator  = "<0.3.0" # Pending https://github.com/Flowminder/FlowKit/issues/6015
@@ -25,7 +25,7 @@ pytest = "*"
 pytest-asyncio = "*"
 "pytest-cov" = "*"
 asynctest = "*"
-black = {extras = ["jupyter"],version = "==23.7.0"}
+black = {extras = ["jupyter"],version = "==24.8.0"}
 flowkit-jwt-generator = {editable = true,path = "./../flowkit_jwt_generator", extras=["pytest"]}
 flowapi = {editable = true, path = "."}
 

@@ -29,6 +29,7 @@ from flowmachine.core.errors.flowmachine_errors import (
 from flowmachine.core.query_state import QueryStateMachine, QueryEvent
 from flowmachine import __version__
 
+
 if TYPE_CHECKING:
     from .query import Query
     from .connection import Connection
@@ -58,20 +59,7 @@ def get_obj_or_stub(connection: "Connection", query_id: str):
         the dependencies it had if not.
 
     """
-    from flowmachine.core.query import Query
-
-    class QStub(Query):
-        def __init__(self, deps, qid):
-            self.deps = deps
-            self._md5 = qid
-            super().__init__()
-
-        def _make_query(self):
-            pass
-
-        @property
-        def column_names(self):
-            pass
+    from .query_stub import QStub
 
     try:
         return get_query_object_by_id(connection, query_id)
@@ -81,12 +69,16 @@ def get_obj_or_stub(connection: "Connection", query_id: str):
         AttributeError,
         pickle.UnpicklingError,
         IndexError,
+        ValueError,
     ) as exc:
         logger.debug("Can't unpickle, creating stub.", query_id=query_id, exception=exc)
         qry = f"SELECT depends_on FROM cache.dependencies WHERE query_id='{query_id}'"
         return QStub(
             deps=[get_obj_or_stub(connection, res[0]) for res in connection.fetch(qry)],
             qid=query_id,
+            flowmachine_version=connection.fetch(
+                f"SELECT version FROM cache.cached WHERE query_id='{query_id}'"
+            )[0][0],
         )
 
 
@@ -112,7 +104,7 @@ def run_ops_list_and_return_execution_time(
     plan_time = 0
     for ddl_op in query_ddl_ops:
         try:
-            ddl_op_result = connection.execute(ddl_op)
+            ddl_op_result = connection.exec_driver_sql(ddl_op)
         except Exception as e:
             logger.error(f"Error executing SQL: '{ddl_op}'. Error was {e}")
             raise e
@@ -135,6 +127,7 @@ def write_query_to_cache(
     ddl_ops_func: Callable[[str, str], List[str]],
     schema: Optional[str] = "cache",
     sleep_duration: Optional[int] = 1,
+    analyze=True,
 ) -> "Query":
     """
     Write a Query object into a postgres table and update the cache metadata about it.
@@ -159,6 +152,8 @@ def write_query_to_cache(
         Name of the schema to write to
     sleep_duration : int, default 1
         Number of seconds to wait between polls when monitoring a query being written from elsewhere
+    analyze : bool, default True
+        Set to False to _disable_ running analyze on the newly created table to generate statistics
 
     Returns
     -------
@@ -203,6 +198,10 @@ def write_query_to_cache(
                 except Exception as exc:
                     logger.error(f"Error executing SQL. Error was {exc}")
                     raise exc
+                if analyze:
+                    logger.debug(f"Running analyze for {schema}.{name}.")
+                    trans.exec_driver_sql(f"ANALYZE {schema}.{name};")
+                    logger.debug(f"Ran analyze for {schema}.{name}.")
                 if schema == "cache":
                     try:
                         write_cache_metadata(
@@ -266,7 +265,7 @@ def write_cache_metadata(
     self_storage = b""
 
     try:
-        in_cache = connection.execute(
+        in_cache = connection.exec_driver_sql(
             f"SELECT EXISTS (SELECT 1 FROM cache.cached WHERE query_id='{query.query_id}' LIMIT 1)"
         ).fetchall()[0][0]
         if not in_cache:
@@ -282,7 +281,7 @@ def write_cache_metadata(
         cache_score_multiplier, class, schema, tablename, obj) 
         VALUES (%s, %s, %s, NOW(), 0, NOW(), %s, 0, %s, %s, %s, %s)
          ON CONFLICT (query_id) DO UPDATE SET last_accessed = NOW();"""
-        connection.execute(
+        connection.exec_driver_sql(
             cache_record_insert,
             (
                 query.query_id,
@@ -294,13 +293,21 @@ def write_cache_metadata(
                 psycopg2.Binary(self_storage),
             ),
         )
-        connection.execute("SELECT touch_cache(%s);", query.query_id)
+        connection.exec_driver_sql(
+            "SELECT touch_cache(%(ident)s);", dict(ident=query.query_id)
+        )
 
         if not in_cache:
+            logger.debug(
+                "Writing dependencies",
+                query_id=query.query_id,
+                dependencies=query.dependencies,
+                stored_dependencies=query._get_stored_dependencies(exclude_self=True),
+            )
             for dep in query._get_stored_dependencies(exclude_self=True):
-                connection.execute(
-                    "INSERT INTO cache.dependencies values (%s, %s) ON CONFLICT DO NOTHING",
-                    (query.query_id, dep.query_id),
+                connection.exec_driver_sql(
+                    "INSERT INTO cache.dependencies values (%(query_id)s, %(dep_id)s) ON CONFLICT DO NOTHING",
+                    dict(query_id=query.query_id, dep_id=dep.query_id),
                 )
             logger.debug(f"{query.fully_qualified_table_name} added to cache.")
         else:
@@ -327,7 +334,9 @@ def touch_cache(connection: "Connection", query_id: str) -> float:
     try:
         with connection.engine.begin() as trans:
             return float(
-                trans.execute(f"SELECT touch_cache('{query_id}')").fetchall()[0][0]
+                trans.exec_driver_sql(f"SELECT touch_cache('{query_id}')").fetchall()[
+                    0
+                ][0]
             )
     except (IndexError, psycopg2.InternalError):
         raise ValueError(f"Query id '{query_id}' is not in cache on this connection.")
@@ -362,20 +371,20 @@ def reset_cache(
     # will also point to that table.
 
     with connection.engine.begin() as trans:
-        qry = f"SELECT tablename FROM cache.cached WHERE schema='cache'"
-        tables = trans.execute(qry).fetchall()
+        qry = "SELECT tablename FROM cache.cached WHERE schema='cache'"
+        tables = trans.exec_driver_sql(qry).fetchall()
 
     with connection.engine.begin() as trans:
-        trans.execute("SELECT setval('cache.cache_touches', 1)")
+        trans.exec_driver_sql("SELECT setval('cache.cache_touches', 1)")
     for table in tables:
         with connection.engine.begin() as trans:
-            trans.execute(f"DROP TABLE IF EXISTS cache.{table[0]} CASCADE")
+            trans.exec_driver_sql(f"DROP TABLE IF EXISTS cache.{table[0]} CASCADE")
     if protect_table_objects:
         with connection.engine.begin() as trans:
-            trans.execute(f"DELETE FROM cache.cached WHERE schema='cache'")
+            trans.exec_driver_sql(f"DELETE FROM cache.cached WHERE schema='cache'")
     else:
         with connection.engine.begin() as trans:
-            trans.execute("TRUNCATE cache.cached CASCADE")
+            trans.exec_driver_sql("TRUNCATE cache.cached CASCADE")
     resync_redis_with_cache(connection=connection, redis=redis)
 
 
@@ -462,9 +471,13 @@ def get_query_object_by_id(connection: "Connection", query_id: str) -> "Query":
         The original query object.
 
     """
-    qry = f"SELECT obj FROM cache.cached WHERE query_id='{query_id}'"
+    qry = f"SELECT obj, version FROM cache.cached WHERE query_id='{query_id}'"
     try:
-        obj = connection.fetch(qry)[0][0]
+        obj, version = connection.fetch(qry)[0]
+        if version != __version__:
+            raise ValueError(
+                f"Query id '{query_id}' belongs to a different flowmachine version (query version {version}, our version {__version__})."
+            )
         return pickle.loads(obj)
     except IndexError:
         raise ValueError(f"Query id '{query_id}' is not in cache on this connection.")
@@ -740,7 +753,7 @@ def set_cache_half_life(connection: "Connection", cache_half_life: float) -> Non
 
     sql = f"UPDATE cache.cache_config SET value='{float(cache_half_life)}' WHERE key='half_life'"
     with connection.engine.begin() as trans:
-        trans.execute(sql)
+        trans.exec_driver_sql(sql)
 
 
 def get_cache_protected_period(connection: "Connection") -> float:
@@ -774,7 +787,7 @@ def set_cache_protected_period(connection: "Connection", protected_period: int) 
 
     sql = f"UPDATE cache.cache_config SET value='{int(protected_period)}' WHERE key='protected_period'"
     with connection.engine.begin() as trans:
-        trans.execute(sql)
+        trans.exec_driver_sql(sql)
 
 
 def set_max_size_of_cache(connection: "Connection", cache_size_limit: int) -> None:
@@ -790,7 +803,7 @@ def set_max_size_of_cache(connection: "Connection", cache_size_limit: int) -> No
     """
     sql = f"UPDATE cache.cache_config SET value='{int(cache_size_limit)}' WHERE key='cache_size'"
     with connection.engine.begin() as trans:
-        trans.execute(sql)
+        trans.exec_driver_sql(sql)
 
 
 def get_compute_time(connection: "Connection", query_id: str) -> float:
@@ -867,69 +880,3 @@ def cache_table_exists(connection: "Connection", query_id: str) -> bool:
         return True
     except ValueError:
         return False
-
-
-async def watch_and_shrink_cache(
-    *,
-    flowdb_connection: "Connection",
-    pool: Executor,
-    sleep_time: int = 86400,
-    timeout: Optional[int] = 600,
-    loop: bool = True,
-    size_threshold: int = None,
-    dry_run: bool = False,
-    protected_period: Optional[int] = None,
-) -> None:
-    """
-    Background task to periodically trigger a shrink of the cache.
-
-    Parameters
-    ----------
-    flowdb_connection : Connection
-        Flowdb connection to check dates on
-    pool : Executor
-        Executor to run the date check with
-    sleep_time : int, default 86400
-        Number of seconds to sleep for between checks
-    timeout : int or None, default 600
-        Seconds to wait for a cache shrink to complete before cancelling it
-    loop : bool, default True
-        Set to false to return after the first check
-    size_threshold : int, default None
-        Optionally override the maximum cache size set in flowdb.
-    dry_run : bool, default False
-        Set to true to just report the objects that would be removed and not remove them
-    protected_period : int, default None
-        Optionally specify a number of seconds within which cache entries are excluded. If None,
-        the value stored in cache.cache_config will be used.Set to a negative number to ignore cache protection
-        completely.
-
-    Returns
-    -------
-    None
-
-    """
-    shrink_func = partial(
-        shrink_below_size,
-        connection=flowdb_connection,
-        size_threshold=size_threshold,
-        dry_run=dry_run,
-        protected_period=protected_period,
-    )
-    while True:
-        logger.debug("Checking if cache should be shrunk.")
-
-        try:  # Set the shrink function running with a copy of the current execution context (db conn etc) in background thread
-            await asyncio.wait_for(
-                asyncio.get_running_loop().run_in_executor(
-                    pool, copy_context().run, shrink_func
-                ),
-                timeout=timeout,
-            )
-        except (TimeoutError, asyncio.exceptions.TimeoutError):
-            logger.error(
-                f"Failed to complete cache shrink within {timeout}s. Trying again in {sleep_time}s."
-            )
-        if not loop:
-            break
-        await asyncio.sleep(sleep_time)

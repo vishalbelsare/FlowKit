@@ -6,7 +6,9 @@
 #  FLOWETL
 #  -----
 
-FROM apache/airflow:2.7.2-python3.8@sha256:4c04bdbb4288846c23c80e1dda7059b6ca6ad288afd9422bbc86ccc535431fa1
+FROM apache/airflow:2.10.4-python3.10@sha256:1365b989c9a2263a5e97111655f7b00fa330b35db3c76510e84e623183d331e9
+
+
 
 ENV AIRFLOW__CORE__DAGS_FOLDER ${AIRFLOW_HOME}/dags
 ENV AIRFLOW__CORE__LOAD_EXAMPLES False
@@ -35,7 +37,7 @@ RUN apt-get update && \
     apt purge -y --auto-remove && \
     rm -rf /var/lib/apt/lists/*
 USER airflow
-RUN cd flowetl && pip install --no-deps --no-cache-dir --user .
+RUN cd flowetl && pip install --no-deps --no-cache-dir .
 
 
 WORKDIR ${AIRFLOW_HOME}
@@ -46,6 +48,7 @@ ENTRYPOINT ["/usr/bin/dumb-init", "--", "/flowetl_entry.sh"]
 EXPOSE 80
 EXPOSE 8080
 ENV FLOWETL_PORT=8080
+ENV AIRFLOW__WEBSERVER__CONFIG_FILE=/${SOURCE_TREE}/flowetl/webserver_config.py
 
 CMD ["webserver"]
 
